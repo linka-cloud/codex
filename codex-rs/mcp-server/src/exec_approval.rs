@@ -5,7 +5,7 @@ use codex_core::CodexConversation;
 use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
 use codex_protocol::parse_command::ParsedCommand;
-use mcp_types::ElicitRequest;
+use mcp_types::{ElicitRequest, ElicitResult};
 use mcp_types::ElicitRequestParamsRequestedSchema;
 use mcp_types::JSONRPCErrorError;
 use mcp_types::ModelContextProtocolRequest;
@@ -46,6 +46,19 @@ pub struct ExecApprovalElicitRequestParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecApprovalResponse {
     pub decision: ReviewDecision,
+}
+
+impl From<ElicitResult> for ExecApprovalResponse {
+    fn from(value: ElicitResult) -> Self {
+        match value.action.as_str() {
+            "accept" => ExecApprovalResponse {
+                decision: ReviewDecision::Approved,
+            },
+            _ => ExecApprovalResponse {
+                decision: ReviewDecision::Denied,
+            },
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -132,19 +145,20 @@ async fn on_exec_approval_response(
     };
 
     // Try to deserialize `value` and then make the appropriate call to `codex`.
-    let response = serde_json::from_value::<ExecApprovalResponse>(value).unwrap_or_else(|err| {
+    let response = serde_json::from_value::<ElicitResult>(value).unwrap_or_else(|err| {
         error!("failed to deserialize ExecApprovalResponse: {err}");
         // If we cannot deserialize the response, we deny the request to be
         // conservative.
-        ExecApprovalResponse {
-            decision: ReviewDecision::Denied,
+        ElicitResult {
+            action: "cancel".to_string(),
+            content: None,
         }
     });
 
     if let Err(err) = codex
         .submit(Op::ExecApproval {
             id: event_id,
-            decision: response.decision,
+            decision: ExecApprovalResponse::from(response).decision,
         })
         .await
     {

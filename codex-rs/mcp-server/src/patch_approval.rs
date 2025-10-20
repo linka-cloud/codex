@@ -6,7 +6,7 @@ use codex_core::CodexConversation;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
-use mcp_types::ElicitRequest;
+use mcp_types::{ElicitRequest, ElicitResult};
 use mcp_types::ElicitRequestParamsRequestedSchema;
 use mcp_types::JSONRPCErrorError;
 use mcp_types::ModelContextProtocolRequest;
@@ -38,6 +38,19 @@ pub struct PatchApprovalElicitRequestParams {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PatchApprovalResponse {
     pub decision: ReviewDecision,
+}
+
+impl From<ElicitResult> for PatchApprovalResponse {
+    fn from(value: ElicitResult) -> Self {
+        match value.action.as_str() {
+            "accept" => PatchApprovalResponse {
+                decision: ReviewDecision::Approved,
+            },
+            _ => PatchApprovalResponse {
+                decision: ReviewDecision::Denied,
+            },
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -131,17 +144,18 @@ pub(crate) async fn on_patch_approval_response(
         }
     };
 
-    let response = serde_json::from_value::<PatchApprovalResponse>(value).unwrap_or_else(|err| {
+    let response = serde_json::from_value::<ElicitResult>(value).unwrap_or_else(|err| {
         error!("failed to deserialize PatchApprovalResponse: {err}");
-        PatchApprovalResponse {
-            decision: ReviewDecision::Denied,
+        ElicitResult {
+            action: "cancel".to_string(),
+            content: None,
         }
     });
 
     if let Err(err) = codex
         .submit(Op::PatchApproval {
             id: event_id,
-            decision: response.decision,
+            decision: PatchApprovalResponse::from(response).decision,
         })
         .await
     {
